@@ -1,0 +1,91 @@
+body {
+    background-color: #f8f9fa;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.chat-messages {
+    height: 400px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    padding: 1rem;
+    background-color: #f8f9fa;
+}
+
+.message {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    border-radius: 0.5rem;
+    animation: fadeIn 0.3s ease-in;
+}
+
+.user-message {
+    background-color: #007bff;
+    color: white;
+    margin-left: 2rem;
+    border-bottom-right-radius: 0.25rem;
+}
+
+.bot-message {
+    background-color: #e9ecef;
+    color: #495057;
+    margin-right: 2rem;
+    border-bottom-left-radius: 0.25rem;
+}
+
+.quick-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.emergency-pulse {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Voice recording animation */
+.recording {
+    animation: recording-pulse 1s infinite;
+    color: #dc3545 !important;
+}
+
+@keyframes recording-pulse {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+.medicine-item {
+    border-left: 4px solid #28a745;
+    padding-left: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.hospital-item {
+    border-left: 4px solid #ffc107;
+    padding-left: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .chat-messages {
+        height: 300px;
+    }
+    
+    .user-message, .bot-message {
+        margin-left: 0;
+        margin-right: 0;
+    }
+}

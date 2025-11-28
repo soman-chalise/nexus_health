@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Health - AI Medical Assistant</title>
+
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Font Awesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Custom CSS -->
+    <link href="css/styles.css" rel="stylesheet">
+</head>
+
+<body>
+    <!-- Navbar -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
+        <div class="container">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-heartbeat me-2"></i>
+                Nexus Health
+            </a>
+            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <span class="navbar-toggler-icon"></span>
+            </button>
+            <div class="collapse navbar-collapse" id="navbarNav">
+                <ul class="navbar-nav ms-auto">
+                    <li class="nav-item">
+                        <a class="nav-link active" href="#chat">Chat</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#medicines">Medicines</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="#hospitals">Hospitals</a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Container -->
+    <div class="container mt-4">
+        <!-- Emergency Banner -->
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <strong><i class="fas fa-exclamation-triangle"></i> Emergency:</strong>
+            For critical situations, use the emergency button below immediately.
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+
+        <div class="row">
+            <!-- Left Column: Chat & Recommendations -->
+            <div class="col-md-8">
+                <!-- Chat Interface -->
+                <div class="card mb-4" id="chat">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">
+                            <i class="fas fa-robot me-2"></i>Medical AI Assistant
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <!-- Chat Messages -->
+                        <div id="chat-messages" class="chat-messages mb-3" style="height: 300px; overflow-y: auto;">
+                            <div class="message bot-message alert alert-info">
+                                <strong>Nexus AI:</strong> Hello! I'm your medical assistant. Please
+                                describe your
+                                symptoms and I'll help you with recommendations.
+                            </div>
+                        </div>
+
+                        <!-- Input Area -->
+                        <div class="input-group">
+                            <input type="file" id="chat-file-input" accept="image/*" style="display: none;">
+                            <button class="btn btn-outline-secondary" id="attach-button" title="Upload Prescription">
+                                <i class="fas fa-paperclip"></i>
+                            </button>
+                            <input type="text" id="message-input" class="form-control"
+                                placeholder="Describe symptoms or upload prescription..."
+                                onkeypress="handleKeyPress(event)">
+                            <button class="btn btn-outline-primary" id="voice-button">
+                                <i id="voice-icon" class="fas fa-microphone"></i>
+                            </button>
+                            <button class="btn btn-primary" id="send-button">
+                                <i class="fas fa-paper-plane"></i> Send
+                            </button>
+                        </div>
+
+                        <!-- Quick Actions -->
+                        <div class="quick-actions mt-3">
+                            <button class="btn btn-outline-secondary btn-sm me-2" onclick="quickSymptom('headache')">
+                                <i class="fas fa-head-side-virus"></i> Headache
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm me-2" onclick="quickSymptom('fever')">
+                                <i class="fas fa-thermometer-full"></i> Fever
+                            </button>
+                            <button class="btn btn-outline-secondary btn-sm" onclick="quickSymptom('cough')">
+                                <i class="fas fa-lungs-virus"></i> Cough
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recommendations Section -->
+                <div class="card mb-4">
+                    <div class="card-header bg-info text-white">
+                        <h6 class="mb-0"><i class="fas fa-file-medical me-2"></i>Medical
+                            Recommendations</h6>
+                    </div>
+                    <div class="card-body">
+                        <div id="recommendations">
+                            <p class="text-muted text-center">Your medical recommendations,
+                                prescription analysis, and
+                                search results will appear here.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Services -->
+            <div class="col-md-4">
+                <!-- Emergency Section -->
+                <div class="card mb-3">
+                    <div class="card-header bg-danger text-white">
+                        <h6 class="mb-0"><i class="fas fa-ambulance me-2"></i>Emergency</h6>
+                    </div>
+                    <div class="card-body text-center">
+                        <button class="btn btn-danger btn-lg w-100 mb-2" id="emergency-button">
+                            <i class="fas fa-ambulance me-2"></i>Call Ambulance
+                        </button>
+                        <small class="text-muted">For life-threatening emergencies</small>
+                    </div>
+                </div>
+
+                <!-- Medicine Search -->
+                <div class="card mb-3" id="medicines">
+                    <div class="card-header bg-primary text-white">
+                        <h6 class="mb-0"><i class="fas fa-pills me-2"></i>Medicine Search</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-2">
+                            <input type="text" id="medicine-search" class="form-control"
+                                placeholder="Search medicine...">
+                        </div>
+                        <button class="btn btn-primary w-100 mb-2" id="medicine-search-button">
+                            <i class="fas fa-search me-2"></i>Search
+                        </button>
+                        <button class="btn btn-outline-primary w-100" id="order-medicine-button">
+                            <i class="fas fa-shopping-cart me-2"></i>Order Selected
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Hospital Search -->
+                <div class="card mb-3" id="hospitals">
+                    <div class="card-header bg-warning text-dark">
+                        <h6 class="mb-0"><i class="fas fa-hospital me-2"></i>Find Hospitals</h6>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-2">
+                            <input type="text" id="location-input" class="form-control" placeholder="Your location"
+                                value="Current Location">
+                        </div>
+                        <button class="btn btn-warning w-100 mb-2" id="find-hospitals-button">
+                            <i class="fas fa-search-location me-2"></i>Find Nearby
+                        </button>
+                        <button class="btn btn-outline-warning w-100" id="book-appointment-button">
+                            <i class="fas fa-calendar-check me-2"></i>Book Appointment
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Modal -->
+    <div class="modal fade" id="loadingModal" tabindex="-1">
+        <div class="modal-dialog modal-sm">
+            <div class="modal-content">
+                <div class="modal-body text-center">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2 mb-0">Processing your request...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Custom JS -->
+    <script src="js/app.js"></script>
+    <script src="js/medicine-cards.js"></script>
+</body>
+
+</html>

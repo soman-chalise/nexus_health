@@ -1,0 +1,630 @@
+// Global variables
+let isVoiceMode = false;
+let currentSessionId = 'session_' + Date.now();
+let recognition = null;
+
+// Initialize the app
+document.addEventListener('DOMContentLoaded', function () {
+    console.log('Nexus Health initialized');
+
+    // Initialize voice recognition if available
+    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        initVoiceRecognition();
+    } else {
+        const voiceBtn = document.getElementById('voice-button');
+        if (voiceBtn) {
+            voiceBtn.disabled = true;
+            voiceBtn.title = 'Voice not supported';
+        }
+    }
+
+    // Attach event listeners
+    document.getElementById('send-button').addEventListener('click', sendMessage);
+    document.getElementById('message-input').addEventListener('keypress', handleKeyPress);
+    document.getElementById('voice-button').addEventListener('click', toggleVoiceMode);
+
+    // Chat File Upload Listeners
+    const attachBtn = document.getElementById('attach-button');
+    const fileInput = document.getElementById('chat-file-input');
+
+    if (attachBtn && fileInput) {
+        attachBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileUpload);
+    }
+
+    // Sidebar Buttons
+    const medSearchBtn = document.getElementById('medicine-search-button');
+    if (medSearchBtn) medSearchBtn.addEventListener('click', searchMedicines);
+
+    const orderMedBtn = document.getElementById('order-medicine-button');
+    if (orderMedBtn) orderMedBtn.addEventListener('click', () => orderMedicine());
+
+    const findHospBtn = document.getElementById('find-hospitals-button');
+    if (findHospBtn) findHospBtn.addEventListener('click', findHospitals);
+
+    const bookApptBtn = document.getElementById('book-appointment-button');
+    if (bookApptBtn) bookApptBtn.addEventListener('click', bookAppointment);
+
+    const emergencyBtn = document.getElementById('emergency-button');
+    if (emergencyBtn) emergencyBtn.addEventListener('click', triggerEmergency);
+});
+
+// Voice Recognition Functions
+function initVoiceRecognition() {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+
+    recognition.onstart = function () {
+        console.log('Voice recognition started. Speak now.');
+        const input = document.getElementById('message-input');
+        input.placeholder = "Listening...";
+    };
+
+    recognition.onspeechend = function () {
+        console.log('Speech ended.');
+    };
+
+    recognition.onresult = function (event) {
+        let interimTranscript = '';
+        let finalTranscript = '';
+
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+                finalTranscript += event.results[i][0].transcript;
+            } else {
+                interimTranscript += event.results[i][0].transcript;
+            }
+        }
+
+        const input = document.getElementById('message-input');
+        if (interimTranscript) {
+            input.value = interimTranscript;
+        }
+        if (finalTranscript) {
+            input.value = finalTranscript;
+            console.log('Final transcript:', finalTranscript);
+            sendMessage();
+        }
+    };
+
+    recognition.onend = function () {
+        console.log('Voice recognition ended.');
+        if (isVoiceMode) {
+            setTimeout(() => {
+                if (isVoiceMode) {
+                    console.log('Restarting recognition...');
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        console.log('Recognition already active');
+                    }
+                }
+            }, 300);
+        } else {
+            const voiceBtn = document.getElementById('voice-button');
+            if (voiceBtn) voiceBtn.classList.remove('recording');
+            document.getElementById('message-input').placeholder = "Describe symptoms or upload prescription...";
+        }
+    };
+
+    recognition.onerror = function (event) {
+        console.error('Speech recognition error:', event.error);
+        if (event.error === 'not-allowed') {
+            alert('Microphone access denied. Please allow microphone access to use voice mode.');
+            toggleVoiceMode();
+        } else if (event.error === 'no-speech') {
+            console.log('No speech detected.');
+        }
+    };
+}
+
+function toggleVoiceMode() {
+    if (!recognition) {
+        alert('Voice recognition not supported in your browser');
+        return;
+    }
+
+    isVoiceMode = !isVoiceMode;
+    const voiceBtn = document.getElementById('voice-button');
+    const voiceIcon = document.getElementById('voice-icon');
+
+    if (isVoiceMode) {
+        voiceBtn.classList.add('recording');
+        voiceIcon.className = 'fas fa-stop';
+        startVoiceRecognition();
+        speakText("Voice mode enabled. I am listening.");
+    } else {
+        voiceBtn.classList.remove('recording');
+        voiceIcon.className = 'fas fa-microphone';
+        stopVoiceRecognition();
+        window.speechSynthesis.cancel();
+    }
+}
+
+function startVoiceRecognition() {
+    try {
+        recognition.start();
+    } catch (e) {
+        console.error('Recognition already started');
+    }
+}
+
+function stopVoiceRecognition() {
+    try {
+        recognition.stop();
+    } catch (e) {
+        console.error('Recognition already stopped');
+    }
+}
+
+function speakText(text) {
+    if (!isVoiceMode) return;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+    window.speechSynthesis.speak(utterance);
+}
+
+// Handle file upload for prescription analysis
+async function handleFileUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Reset input
+    event.target.value = '';
+
+    // Add message to chat indicating upload
+    addMessage(`📄 Uploaded prescription: ${file.name}`, 'user');
+    showLoading(true);
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const response = await fetch('http://localhost:8000/api/medical/analyze-prescription', {
+            method: 'POST',
+            body: formData
+        });
+
+        const data = await response.json();
+
+        // Render result in chat
+        const analysisHtml = renderPrescriptionResult(data.analysis);
+        addMessage(analysisHtml, 'bot');
+
+        // Auto-set reminders
+        if (data.analysis && data.analysis.medications) {
+            const count = data.analysis.medications.length;
+            addMessage(`✅ I've extracted ${count} medications and automatically set reminders for you.`, 'bot');
+
+            if (isVoiceMode) {
+                speakText(`I have analyzed your prescription and set reminders for ${count} medications.`);
+            }
+
+            // Set reminders automatically
+            data.analysis.medications.forEach(med => {
+                setReminder(med.name, med.frequency, true); // true = silent/auto mode
+            });
+        }
+
+    } catch (error) {
+        console.error('Error:', error);
+        addMessage('Failed to analyze prescription. Please try again.', 'bot');
+    } finally {
+        showLoading(false);
+    }
+}
+
+function renderPrescriptionResult(analysis) {
+    if (!analysis || !analysis.medications) {
+        return '<p>Could not extract structured data.</p>';
+    }
+
+    let html = `
+        <div class="card border-success mb-2">
+            <div class="card-header bg-success text-white py-1 px-2">
+                <small><i class="fas fa-file-prescription"></i> Prescription Analysis</small>
+            </div>
+            <div class="card-body p-2">
+                <p class="mb-1 small"><strong>Dr:</strong> ${analysis.doctor_name} | <strong>Date:</strong> ${analysis.date}</p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-striped mb-0 small">
+                        <thead>
+                            <tr>
+                                <th>Medicine</th>
+                                <th>Dosage</th>
+                                <th>Freq</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+    `;
+
+    analysis.medications.forEach(med => {
+        html += `
+            <tr>
+                <td>${med.name}</td>
+                <td>${med.dosage}</td>
+                <td>${med.frequency}</td>
+            </tr>
+        `;
+    });
+
+    html += `
+                        </tbody>
+                    </table>
+                </div>
+                <p class="mt-1 mb-0 small text-muted"><em>${analysis.special_instructions || ''}</em></p>
+            </div>
+        </div>
+    `;
+
+    return html;
+}
+
+// Send message to chat
+async function sendMessage() {
+    const input = document.getElementById('message-input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    // Add user message to chat
+    addMessage(message, 'user');
+    input.value = '';
+    showLoading(true);
+
+    try {
+        const response = await fetch('http://localhost:8000/api/chat/text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: message,
+                session_id: currentSessionId,
+                user_id: "user_123"
+            })
+        });
+
+        const data = await response.json();
+        addMessage(data.response, 'bot');
+
+        if (isVoiceMode) {
+            speakText(data.response);
+        }
+
+        // Handle actions
+        if (data.action) {
+            console.log("Action triggered:", data.action);
+            switch (data.action.type) {
+                case 'EMERGENCY':
+                    triggerEmergency();
+                    break;
+                case 'HOSPITAL_SEARCH':
+                    findHospitals();
+                    break;
+                case 'BOOK_APPOINTMENT':
+                    bookAppointment();
+                    break;
+                case 'ORDER_MEDICINE':
+                    if (data.action.data) {
+                        orderMedicine(data.action.data);
+                    }
+                    break;
+            }
+        }
+
+    } catch (error) {
+        console.error('Error:', error);
+        addMessage('Failed to get response. Please try again.', 'bot');
+    } finally {
+        showLoading(false);
+    }
+}
+
+function setReminder(medicineName, frequency, silent = false) {
+    // Simulate setting a reminder
+    const time = new Date();
+    time.setSeconds(time.getSeconds() + 5);
+
+    if (!silent) {
+        alert(`Reminder set for ${medicineName} (${frequency}).`);
+    }
+
+    setTimeout(() => {
+        // Play a sound
+        const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
+        audio.play().catch(e => console.log('Audio play failed', e));
+
+        // Use a nicer notification if possible, fallback to alert
+        if (Notification.permission === "granted") {
+            new Notification(`⏰ Time to take ${medicineName}!`, {
+                body: `Dosage: ${frequency}`
+            });
+        } else if (Notification.permission !== "denied") {
+            Notification.requestPermission().then(permission => {
+                if (permission === "granted") {
+                    new Notification(`⏰ Time to take ${medicineName}!`, {
+                        body: `Dosage: ${frequency}`
+                    });
+                } else {
+                    alert(`⏰ REMINDER: Time to take ${medicineName}!`);
+                }
+            });
+        } else {
+            alert(`⏰ REMINDER: Time to take ${medicineName}!`);
+        }
+
+        if (isVoiceMode) {
+            speakText(`It is time to take your ${medicineName}.`);
+        }
+    }, 5000 + (Math.random() * 2000)); // Stagger slightly
+}
+
+// Add message to chat
+function addMessage(text, sender) {
+    const chatMessages = document.getElementById('chat-messages');
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message ${sender}-message alert ${sender === 'user' ? 'alert-primary' : 'alert-info'}`;
+
+    // Check if text is HTML (starts with <)
+    if (text.trim().startsWith('<')) {
+        messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'Nexus AI'}:</strong> ${text}`;
+    } else {
+        // Escape HTML for plain text to prevent XSS
+        const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'Nexus AI'}:</strong> ${safeText}`;
+    }
+
+    chatMessages.appendChild(messageDiv);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+// Handle Enter key press
+function handleKeyPress(event) {
+    if (event.key === 'Enter') {
+        sendMessage();
+    }
+}
+
+// Quick symptom buttons
+function quickSymptom(symptom) {
+    const messages = {
+        'headache': 'I have a headache. It started a few hours ago and is getting worse.',
+        'fever': 'I have fever and body chills. My temperature is around 101°F.',
+        'cough': 'I have a persistent cough with some chest congestion.'
+    };
+
+    document.getElementById('message-input').value = messages[symptom];
+    sendMessage();
+}
+
+function formatPrescriptionAnalysis(text) {
+    if (!text) return '';
+    if (typeof text === 'object') return JSON.stringify(text);
+    return text.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+}
+
+// Medicine functions
+async function searchMedicines() {
+    const searchTerm = document.getElementById('medicine-search').value;
+    if (!searchTerm) return;
+
+    addMessage(`Searching for medicines: ${searchTerm}`, 'user');
+    showLoading(true);
+
+    try {
+        const response = await fetch(`http://localhost:8000/api/medical/medicines/search?query=${encodeURIComponent(searchTerm)}`);
+        const data = await response.json();
+
+        let resultsHtml = '<h6>Search Results:</h6><ul class="list-group">';
+        data.medicines.forEach(med => {
+            resultsHtml += `
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <div>
+                        <strong>${med.name}</strong><br>
+                        <small class="text-muted">${med.description}</small>
+                    </div>
+                    <span class="badge bg-primary rounded-pill">$${med.price}</span>
+                </li>
+            `;
+        });
+        resultsHtml += '</ul>';
+
+        const recommendationsDiv = document.getElementById('recommendations');
+        recommendationsDiv.innerHTML = resultsHtml;
+        addMessage(`I found ${data.medicines.length} medicines matching your search.`, 'bot');
+
+    } catch (error) {
+        console.error('Error:', error);
+        addMessage('Failed to search medicines.', 'bot');
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function orderMedicine(medicineName = null) {
+    let searchTerm = medicineName;
+
+    if (!searchTerm) {
+        searchTerm = document.getElementById('medicine-search').value;
+    }
+
+    if (!searchTerm) {
+        alert('Please search for a medicine first');
+        return;
+    }
+
+    if (confirm(`Do you want to place an order for ${searchTerm}?`)) {
+        showLoading(true);
+        try {
+            // In a real app, we'd search for the medicine ID first
+            const response = await fetch(`http://localhost:8000/api/medical/order-medicine?medicine_id=1&user_id=user_123&quantity=1`, {
+                method: 'POST'
+            });
+            const data = await response.json();
+            addMessage(`Order placed successfully for ${searchTerm}! Order ID: ${data.order_id}`, 'bot');
+            alert(data.message);
+        } catch (error) {
+            console.error('Error:', error);
+            addMessage('Failed to place order.', 'bot');
+        } finally {
+            showLoading(false);
+        }
+    }
+}
+
+// Hospital functions
+async function findHospitals() {
+    addMessage('Finding hospitals near your location...', 'user');
+    showLoading(true);
+
+    if (!navigator.geolocation) {
+        addMessage('Geolocation is not supported by your browser.', 'bot');
+        showLoading(false);
+        return;
+    }
+
+    navigator.geolocation.getCurrentPosition(async (position) => {
+        try {
+            const lat = position.coords.latitude;
+            const lon = position.coords.longitude;
+
+            console.log(`Searching hospitals at: ${lat}, ${lon}`);
+
+            const response = await fetch(`http://localhost:8000/api/emergency/hospitals/nearby?latitude=${lat}&longitude=${lon}`);
+            const data = await response.json();
+
+            let hospitalsHtml = '<h6>Nearby Hospitals:</h6><ul class="list-group">';
+
+            if (data.length === 0) {
+                hospitalsHtml += '<li class="list-group-item">No hospitals found nearby.</li>';
+            } else {
+                data.forEach(hospital => {
+                    hospitalsHtml += `
+                        <li class="list-group-item">
+                            <strong>${hospital.name}</strong><br>
+                            <small><i class="fas fa-map-marker-alt"></i> ${hospital.address}</small><br>
+                            <small class="text-muted"><i class="fas fa-route"></i> ${hospital.distance_km} km away</small>
+                        </li>
+                    `;
+                });
+            }
+            hospitalsHtml += '</ul>';
+
+            const recommendationsDiv = document.getElementById('recommendations');
+            recommendationsDiv.innerHTML = hospitalsHtml;
+            addMessage(`I found ${data.length} hospitals near your location.`, 'bot');
+
+        } catch (error) {
+            console.error('Error:', error);
+            addMessage('Failed to find hospitals.', 'bot');
+        } finally {
+            showLoading(false);
+        }
+    }, (error) => {
+        console.error('Geolocation error:', error);
+        addMessage('Unable to retrieve your location. Please allow location access.', 'bot');
+        showLoading(false);
+    });
+}
+
+async function bookAppointment() {
+    addMessage('I want to book a doctor appointment', 'user');
+    const time = prompt("Enter preferred time (e.g., Tomorrow 10 AM):");
+    if (!time) return;
+
+    showLoading(true);
+    try {
+        const response = await fetch('http://localhost:8000/api/appointments/book', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                hospital_id: 1,
+                user_id: 'user_123',
+                user_name: 'John Doe',
+                user_phone: '555-0123',
+                symptoms: 'General checkup',
+                preferred_time: time
+            })
+        });
+
+        const data = await response.json();
+        addMessage(`Appointment booked! ${data.message}`, 'bot');
+    } catch (error) {
+        console.error('Error:', error);
+        addMessage('Failed to book appointment.', 'bot');
+    } finally {
+        showLoading(false);
+    }
+}
+
+// Emergency function
+async function triggerEmergency() {
+    if (confirm('🚨 This will call emergency services. Are you in a life-threatening situation?')) {
+        showLoading(true);
+
+        // Get real browser location
+        if (!navigator.geolocation) {
+            addMessage('Location access needed for emergency services!', 'bot');
+            showLoading(false);
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(async (position) => {
+            try {
+                const location = `${position.coords.latitude}, ${position.coords.longitude}`;
+                console.log(`🚨 Emergency at real location: ${location}`);
+
+                const response = await fetch('http://localhost:8000/api/emergency/ambulance', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        user_id: 'user_123',
+                        location: location,
+                        symptoms: 'Emergency Alert',
+                        contact_number: '555-0123',
+                        patient_name: null,
+                        incident_details: null
+                    })
+                });
+
+                const data = await response.json();
+                alert('Emergency services have been notified. Help is on the way!');
+                addMessage(`🚨 EMERGENCY: ${data.message}`, 'bot');
+            } catch (error) {
+                console.error('Error:', error);
+                addMessage('Failed to call emergency services. Please call 911 immediately!', 'bot');
+            } finally {
+                showLoading(false);
+            }
+        }, (error) => {
+            console.error('Location error:', error);
+            addMessage('Failed to get location. Please enable location access!', 'bot');
+            showLoading(false);
+        });
+    }
+}
+
+// Update recommendations
+function updateRecommendations(response) {
+    const recommendationsDiv = document.getElementById('recommendations');
+    recommendationsDiv.innerHTML = `<div class="alert alert-info">${formatPrescriptionAnalysis(response)}</div>`;
+}
+
+// Loading modal
+function showLoading(show) {
+    const modalEl = document.getElementById('loadingModal');
+    if (!modalEl) return;
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    if (show) modal.show();
+    else modal.hide();
+}
+
+// Simple error handling
+window.addEventListener('error', function (e) {
+    console.error('Application error:', e.error);
+    addMessage('Something went wrong. Please refresh the page and try again.', 'bot');
+});
