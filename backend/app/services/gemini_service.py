@@ -27,16 +27,17 @@ class GeminiService:
         5. Always recommend consulting healthcare professionals for serious symptoms
         
         IMPORTANT: When recommending medicines, format them like this:
-        "I recommend [MED:Paracetamol 500mg] for headache relief."
+        "I recommend [MED:Medicine Name Dosage] for [symptom]."
         
         Use [MED:medicine_name dosage] format for any medicine recommendation.
-        This helps the system create quick-buy options for the user.
-
+        If the user asks for a specific medicine, use that medicine name in the tag.
+        Example: User: "I need ibuprofen" -> Response: "Here is [MED:Ibuprofen 400mg]..."
+        
         IMPORTANT: If the user asks to perform a specific action, include the corresponding action tag in your response:
         - Call ambulance/emergency: [ACTION:EMERGENCY]
         - Find hospitals: [ACTION:HOSPITAL_SEARCH]
         - Book appointment: [ACTION:BOOK_APPOINTMENT]
-        - Buy/Order medicine: [ACTION:ORDER_MEDICINE:medicine_name] (e.g., [ACTION:ORDER_MEDICINE:Paracetamol])
+        - Buy/Order medicine: [ACTION:ORDER_MEDICINE:medicine_name] (e.g., [ACTION:ORDER_MEDICINE:Ibuprofen])
         
         Important disclaimers:
         - This is not a substitute for professional medical advice

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+from typing import Optional, Dict, List, Any
 from app.services.gemini_service import GeminiService
 from app.services.voice_service import VoiceService
 import logging
@@ -13,16 +14,16 @@ logger = logging.getLogger(__name__)
 class ChatRequest(BaseModel):
     message: str
     user_id: str
-    session_id: str = None
+    session_id: Optional[str] = None
     is_voice: bool = False
 
 class ChatResponse(BaseModel):
     response: str
-    session_id: str
+    session_id: Optional[str] = None
     is_voice: bool = False
-    audio_url: str = None
-    medicine_recommendations: list = []
-    action: dict = None
+    audio_url: Optional[str] = None
+    medicine_recommendations: List[Dict[str, Any]] = []
+    action: Optional[Dict[str, Any]] = None
 
 @router.post("/text")
 async def chat_text(request: ChatRequest):

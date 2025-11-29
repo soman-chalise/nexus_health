@@ -32,12 +32,13 @@ class EmergencyService:
     def find_nearby_hospitals(self, latitude: float, longitude: float, radius: int = 5000) -> List[Dict]:
         """Find nearby hospitals using OpenStreetMap"""
         try:
-            delta = 0.05
+            delta = 0.1  # Increased to ~11km
             viewbox = [longitude - delta, latitude - delta, longitude + delta, latitude + delta]
             url = "https://nominatim.openstreetmap.org/search"
             params = {"q": "hospital", "format": "json", "limit": 10, "viewbox": f"{viewbox[0]},{viewbox[1]},{viewbox[2]},{viewbox[3]}", "bounded": 1, "addressdetails": 1}
             headers = {"User-Agent": "NexusHealth/1.0"}
-            response = requests.get(url, params=params, headers=headers)
+            logging.info(f"Searching hospitals with params: {params}")
+            response = requests.get(url, params=params, headers=headers, timeout=10)
             results = response.json()
             
             hospitals = []

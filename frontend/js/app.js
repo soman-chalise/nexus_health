@@ -32,22 +32,43 @@ document.addEventListener('DOMContentLoaded', function () {
         fileInput.addEventListener('change', handleFileUpload);
     }
 
-    // Sidebar Buttons
-    const medSearchBtn = document.getElementById('medicine-search-button');
-    if (medSearchBtn) medSearchBtn.addEventListener('click', searchMedicines);
-
-    const orderMedBtn = document.getElementById('order-medicine-button');
-    if (orderMedBtn) orderMedBtn.addEventListener('click', () => orderMedicine());
-
-    const findHospBtn = document.getElementById('find-hospitals-button');
-    if (findHospBtn) findHospBtn.addEventListener('click', findHospitals);
-
-    const bookApptBtn = document.getElementById('book-appointment-button');
-    if (bookApptBtn) bookApptBtn.addEventListener('click', bookAppointment);
-
+    // Emergency Button (Floating)
     const emergencyBtn = document.getElementById('emergency-button');
     if (emergencyBtn) emergencyBtn.addEventListener('click', triggerEmergency);
+
+    // New Action Icons
+    const alertBtn = document.getElementById('alert-button');
+    if (alertBtn) alertBtn.addEventListener('click', triggerEmergency);
+
+    const hospitalBtn = document.getElementById('hospital-button');
+    if (hospitalBtn) hospitalBtn.addEventListener('click', toggleHospitalMenu);
+
+    // Close hospital menu when clicking outside
+    document.addEventListener('click', function (event) {
+        const menu = document.getElementById('hospital-menu');
+        const btn = document.getElementById('hospital-button');
+        if (menu && btn && !menu.contains(event.target) && !btn.contains(event.target)) {
+            menu.style.display = 'none';
+        }
+    });
 });
+
+// Hospital Menu Functions
+function toggleHospitalMenu() {
+    const menu = document.getElementById('hospital-menu');
+    if (menu) {
+        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    }
+}
+
+function handleHospitalAction(action) {
+    const menu = document.getElementById('hospital-menu');
+    if (menu) menu.style.display = 'none';
+
+    if (action === 'locate') {
+        findHospitals();
+    }
+}
 
 // Voice Recognition Functions
 function initVoiceRecognition() {
@@ -180,7 +201,7 @@ async function handleFileUpload(event) {
 
     // Add message to chat indicating upload
     addMessage(`📄 Uploaded prescription: ${file.name}`, 'user');
-    showLoading(true);
+    showTypingIndicator();
 
     const formData = new FormData();
     formData.append('file', file);
@@ -192,6 +213,7 @@ async function handleFileUpload(event) {
         });
 
         const data = await response.json();
+        removeTypingIndicator();
 
         // Render result in chat
         const analysisHtml = renderPrescriptionResult(data.analysis);
@@ -214,9 +236,8 @@ async function handleFileUpload(event) {
 
     } catch (error) {
         console.error('Error:', error);
+        removeTypingIndicator();
         addMessage('Failed to analyze prescription. Please try again.', 'bot');
-    } finally {
-        showLoading(false);
     }
 }
 
@@ -239,6 +260,7 @@ function renderPrescriptionResult(analysis) {
                                 <th>Medicine</th>
                                 <th>Dosage</th>
                                 <th>Freq</th>
+                                <th>Action</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -250,6 +272,11 @@ function renderPrescriptionResult(analysis) {
                 <td>${med.name}</td>
                 <td>${med.dosage}</td>
                 <td>${med.frequency}</td>
+                <td>
+                    <button class="btn btn-sm btn-outline-primary py-0" onclick="buyMedicine('${med.name}')">
+                        Buy
+                    </button>
+                </td>
             </tr>
         `;
     });
@@ -266,6 +293,33 @@ function renderPrescriptionResult(analysis) {
     return html;
 }
 
+// Render medicine cards below AI response
+function renderMedicineCards(medicines) {
+    if (!medicines || medicines.length === 0) return;
+
+    const chatMessages = document.getElementById('chat-messages');
+    const cardsContainer = document.createElement('div');
+    cardsContainer.className = 'medicine-cards-container mb-3';
+
+    medicines.forEach(med => {
+        const cardHtml = `
+            <div class="medicine-card alert alert-success border-success d-flex justify-content-between align-items-center p-3 mb-2">
+                <div class="medicine-info">
+                    <h6 class="mb-1">💊 ${med.display_name}</h6>
+                    <small class="text-muted">${med.estimated_price}</small>
+                </div>
+                <button class="btn btn-primary btn-sm" onclick="buyMedicine('${med.name}')">
+                    <i class="fas fa-shopping-cart"></i> Buy Now
+                </button>
+            </div>
+        `;
+        cardsContainer.innerHTML += cardHtml;
+    });
+
+    chatMessages.appendChild(cardsContainer);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
 // Send message to chat
 async function sendMessage() {
     const input = document.getElementById('message-input');
@@ -275,7 +329,7 @@ async function sendMessage() {
     // Add user message to chat
     addMessage(message, 'user');
     input.value = '';
-    showLoading(true);
+    showTypingIndicator();
 
     try {
         const response = await fetch('http://localhost:8000/api/chat/text', {
@@ -289,15 +343,13 @@ async function sendMessage() {
         });
 
         const data = await response.json();
-        addMessage(data.response, 'bot');
+        removeTypingIndicator();
 
-        if (isVoiceMode) {
-            speakText(data.response);
-        }
-
-        // Handle actions
+        // Handle actions first
+        let actionTriggered = false;
         if (data.action) {
             console.log("Action triggered:", data.action);
+            actionTriggered = true;
             switch (data.action.type) {
                 case 'EMERGENCY':
                     triggerEmergency();
@@ -316,11 +368,31 @@ async function sendMessage() {
             }
         }
 
+        // Clean response text (remove [MED:...] markers)
+        let cleanResponse = data.response ? data.response.replace(/\[MED:(.*?)\]/g, '$1') : '';
+
+        // Only show AI text response if it's NOT just a generic confirmation of the action
+        // OR if no action was triggered.
+        if (!actionTriggered && cleanResponse) {
+            // Await the streaming to finish before showing cards
+            await addMessage(cleanResponse, 'bot', true);
+            if (isVoiceMode) {
+                speakText(cleanResponse);
+            }
+        } else if (actionTriggered && cleanResponse) {
+            // Suppress AI response if action is triggered to avoid double printing
+            console.log("Suppressed AI response due to action:", cleanResponse);
+        }
+
+        // Render medicine cards if recommendations found
+        if (data.medicine_recommendations && data.medicine_recommendations.length > 0) {
+            renderMedicineCards(data.medicine_recommendations);
+        }
+
     } catch (error) {
         console.error('Error:', error);
+        removeTypingIndicator();
         addMessage('Failed to get response. Please try again.', 'bot');
-    } finally {
-        showLoading(false);
     }
 }
 
@@ -364,22 +436,128 @@ function setReminder(medicineName, frequency, silent = false) {
 }
 
 // Add message to chat
-function addMessage(text, sender) {
+function addMessage(text, sender, stream = false) {
     const chatMessages = document.getElementById('chat-messages');
     const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${sender}-message alert ${sender === 'user' ? 'alert-primary' : 'alert-info'}`;
+    messageDiv.className = `message ${sender}-message`;
 
-    // Check if text is HTML (starts with <)
-    if (text.trim().startsWith('<')) {
-        messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'Nexus AI'}:</strong> ${text}`;
-    } else {
-        // Escape HTML for plain text to prevent XSS
-        const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        messageDiv.innerHTML = `<strong>${sender === 'user' ? 'You' : 'Nexus AI'}:</strong> ${safeText}`;
-    }
+    // Create content wrapper
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content';
+
+    messageDiv.appendChild(contentDiv);
+
+    // Create time element
+    const timeDiv = document.createElement('div');
+    timeDiv.className = 'message-time';
+    timeDiv.innerText = 'Just now';
+    messageDiv.appendChild(timeDiv);
 
     chatMessages.appendChild(messageDiv);
     chatMessages.scrollTop = chatMessages.scrollHeight;
+
+    if (stream && sender === 'bot' && !text.trim().startsWith('<')) {
+        // Stream text for bot messages that aren't HTML
+        // Return the promise from typeMessage
+        return typeMessage(text, contentDiv);
+    } else {
+        // Check if text is HTML (starts with <)
+        if (text.trim().startsWith('<')) {
+            contentDiv.innerHTML = text;
+        } else {
+            // Escape HTML for plain text to prevent XSS
+            const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            contentDiv.innerHTML = safeText;
+        }
+        return Promise.resolve();
+    }
+}
+
+// Format message with basic markdown
+function formatMessage(text) {
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/\n/g, '<br>');
+}
+
+// Typing effect function
+function typeMessage(text, element) {
+    return new Promise((resolve) => {
+        const formatted = formatMessage(text);
+        // Split by HTML tags or words
+        // Regex matches: <tag...> OR non-tag text
+        const parts = formatted.match(/(<[^>]+>|[^<]+)/g) || [];
+
+        let i = 0;
+
+        function stream() {
+            if (i >= parts.length) {
+                resolve();
+                return;
+            }
+
+            const part = parts[i];
+            if (part.startsWith('<')) {
+                // It's a tag, append immediately
+                element.innerHTML += part;
+                i++;
+                stream();
+            } else {
+                // It's text, split by space to get words
+                // We preserve spaces by splitting by space and adding it back
+                const words = part.split(' ');
+                let w = 0;
+
+                function streamWords() {
+                    if (w >= words.length) {
+                        i++;
+                        stream();
+                        return;
+                    }
+                    // Add space if it's not the last word, or if the original text had space
+                    // Simple approximation: add space after every word except maybe last?
+                    // split(' ') consumes the space.
+                    element.innerHTML += words[w] + (w < words.length - 1 ? ' ' : '');
+                    w++;
+
+                    const chatMessages = document.getElementById('chat-messages');
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                    // Fast delay for words (e.g., 30-70ms)
+                    setTimeout(streamWords, 30 + Math.random() * 40);
+                }
+                streamWords();
+            }
+        }
+        stream();
+    });
+}
+
+// Show/Hide Typing Indicator
+function showTypingIndicator() {
+    const chatMessages = document.getElementById('chat-messages');
+
+    // Remove existing if any
+    removeTypingIndicator();
+
+    const indicatorHtml = `
+        <div id="typing-indicator" class="typing-indicator">
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+            <div class="typing-dot"></div>
+        </div>
+    `;
+
+    chatMessages.insertAdjacentHTML('beforeend', indicatorHtml);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+
+function removeTypingIndicator() {
+    const indicator = document.getElementById('typing-indicator');
+    if (indicator) {
+        indicator.remove();
+    }
 }
 
 // Handle Enter key press
@@ -387,18 +565,6 @@ function handleKeyPress(event) {
     if (event.key === 'Enter') {
         sendMessage();
     }
-}
-
-// Quick symptom buttons
-function quickSymptom(symptom) {
-    const messages = {
-        'headache': 'I have a headache. It started a few hours ago and is getting worse.',
-        'fever': 'I have fever and body chills. My temperature is around 101°F.',
-        'cough': 'I have a persistent cough with some chest congestion.'
-    };
-
-    document.getElementById('message-input').value = messages[symptom];
-    sendMessage();
 }
 
 function formatPrescriptionAnalysis(text) {
@@ -409,81 +575,108 @@ function formatPrescriptionAnalysis(text) {
 
 // Medicine functions
 async function searchMedicines() {
-    const searchTerm = document.getElementById('medicine-search').value;
-    if (!searchTerm) return;
-
-    addMessage(`Searching for medicines: ${searchTerm}`, 'user');
-    showLoading(true);
-
-    try {
-        const response = await fetch(`http://localhost:8000/api/medical/medicines/search?query=${encodeURIComponent(searchTerm)}`);
-        const data = await response.json();
-
-        let resultsHtml = '<h6>Search Results:</h6><ul class="list-group">';
-        data.medicines.forEach(med => {
-            resultsHtml += `
-                <li class="list-group-item d-flex justify-content-between align-items-center">
-                    <div>
-                        <strong>${med.name}</strong><br>
-                        <small class="text-muted">${med.description}</small>
-                    </div>
-                    <span class="badge bg-primary rounded-pill">$${med.price}</span>
-                </li>
-            `;
-        });
-        resultsHtml += '</ul>';
-
-        const recommendationsDiv = document.getElementById('recommendations');
-        recommendationsDiv.innerHTML = resultsHtml;
-        addMessage(`I found ${data.medicines.length} medicines matching your search.`, 'bot');
-
-    } catch (error) {
-        console.error('Error:', error);
-        addMessage('Failed to search medicines.', 'bot');
-    } finally {
-        showLoading(false);
-    }
+    console.log("Medicine search triggered via AI or other means");
 }
 
 async function orderMedicine(medicineName = null) {
-    let searchTerm = medicineName;
+    if (!medicineName) return;
 
-    if (!searchTerm) {
-        searchTerm = document.getElementById('medicine-search').value;
-    }
-
-    if (!searchTerm) {
-        alert('Please search for a medicine first');
-        return;
-    }
-
-    if (confirm(`Do you want to place an order for ${searchTerm}?`)) {
-        showLoading(true);
+    if (confirm(`Do you want to place an order for ${medicineName}?`)) {
+        showTypingIndicator();
         try {
-            // In a real app, we'd search for the medicine ID first
             const response = await fetch(`http://localhost:8000/api/medical/order-medicine?medicine_id=1&user_id=user_123&quantity=1`, {
                 method: 'POST'
             });
             const data = await response.json();
-            addMessage(`Order placed successfully for ${searchTerm}! Order ID: ${data.order_id}`, 'bot');
+            removeTypingIndicator();
+            addMessage(`Order placed successfully for ${medicineName}! Order ID: ${data.order_id}`, 'bot');
             alert(data.message);
         } catch (error) {
             console.error('Error:', error);
+            removeTypingIndicator();
             addMessage('Failed to place order.', 'bot');
-        } finally {
-            showLoading(false);
         }
+    }
+}
+
+async function buyMedicine(medicineName) {
+    console.log(`🛒 Buying medicine: ${medicineName}`);
+
+    // Create a progress message container
+    const progressId = 'progress-' + Date.now();
+    const progressHtml = `
+        <div id="${progressId}" class="alert alert-info mb-2">
+            <div class="d-flex align-items-center">
+                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                <span id="${progressId}-text">Initializing shopping agent...</span>
+            </div>
+        </div>
+    `;
+    addMessage(progressHtml, 'bot');
+
+    // Simulated progress updates
+    const updateProgress = (text) => {
+        const el = document.getElementById(`${progressId}-text`);
+        if (el) el.innerText = text;
+    };
+
+    // Sequence of updates
+    setTimeout(() => updateProgress(`🔍 Searching for ${medicineName} on 1mg...`), 1000);
+    setTimeout(() => updateProgress(`💊 Found ${medicineName}. Verifying details...`), 3000);
+    setTimeout(() => updateProgress(`🛒 Adding ${medicineName} to cart...`), 5000);
+    setTimeout(() => updateProgress(`✅ Verifying cart contents...`), 7000);
+
+    try {
+        const response = await fetch('http://localhost:8000/api/medical/buy-medicine', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                medicine_name: medicineName,
+                user_id: 'user_123'
+            })
+        });
+
+        const data = await response.json();
+
+        // Remove progress message
+        const progressEl = document.getElementById(progressId);
+        if (progressEl) progressEl.remove();
+
+        if (data.success) {
+            const resultHtml = `
+                <div class="alert alert-success">
+                    <strong>✅ ${data.message}</strong><br>
+                    <small>Price: ${data.price}</small><br>
+                    <a href="${data.cart_url}" target="_blank" class="btn btn-sm btn-outline-success mt-2">
+                        <i class="fas fa-external-link-alt"></i> View Cart
+                    </a>
+                </div>
+            `;
+            addMessage(resultHtml, 'bot');
+
+            if (isVoiceMode) {
+                speakText(data.message);
+            }
+        } else {
+            addMessage(`❌ Failed to add medicine to cart: ${data.message}`, 'bot');
+        }
+
+    } catch (error) {
+        console.error('Buy medicine error:', error);
+        const progressEl = document.getElementById(progressId);
+        if (progressEl) progressEl.remove();
+        addMessage('❌ Failed to contact shopping agent. Please try again.', 'bot');
     }
 }
 
 // Hospital functions
 async function findHospitals() {
     addMessage('Finding hospitals near your location...', 'user');
-    showLoading(true);
+    showTypingIndicator();
 
     if (!navigator.geolocation) {
+        removeTypingIndicator();
         addMessage('Geolocation is not supported by your browser.', 'bot');
-        showLoading(false);
         return;
     }
 
@@ -496,47 +689,61 @@ async function findHospitals() {
 
             const response = await fetch(`http://localhost:8000/api/emergency/hospitals/nearby?latitude=${lat}&longitude=${lon}`);
             const data = await response.json();
-
-            let hospitalsHtml = '<h6>Nearby Hospitals:</h6><ul class="list-group">';
+            removeTypingIndicator();
 
             if (data.length === 0) {
-                hospitalsHtml += '<li class="list-group-item">No hospitals found nearby.</li>';
+                addMessage('No hospitals found nearby.', 'bot');
             } else {
+                let hospitalsHtml = '<div class="list-group">';
                 data.forEach(hospital => {
                     hospitalsHtml += `
-                        <li class="list-group-item">
-                            <strong>${hospital.name}</strong><br>
-                            <small><i class="fas fa-map-marker-alt"></i> ${hospital.address}</small><br>
-                            <small class="text-muted"><i class="fas fa-route"></i> ${hospital.distance_km} km away</small>
-                        </li>
+                        <div class="list-group-item list-group-item-action flex-column align-items-start border-0 shadow-sm mb-2 rounded">
+                            <div class="d-flex w-100 justify-content-between">
+                                <h6 class="mb-1 fw-bold text-primary">${hospital.name}</h6>
+                                <small class="text-muted">${hospital.distance_km} km</small>
+                            </div>
+                            <p class="mb-1 small text-muted"><i class="fas fa-map-marker-alt me-1"></i> ${hospital.address}</p>
+                            <button class="btn btn-sm btn-outline-primary mt-2 w-100" onclick="bookAppointment('${hospital.name.replace(/'/g, "\\'")}')">
+                                <i class="fas fa-calendar-check me-1"></i> Book Appointment
+                            </button>
+                        </div>
                     `;
                 });
-            }
-            hospitalsHtml += '</ul>';
+                hospitalsHtml += '</div>';
+                addMessage(hospitalsHtml, 'bot');
 
-            const recommendationsDiv = document.getElementById('recommendations');
-            recommendationsDiv.innerHTML = hospitalsHtml;
-            addMessage(`I found ${data.length} hospitals near your location.`, 'bot');
+                if (isVoiceMode) {
+                    speakText(`I found ${data.length} hospitals near you.`);
+                }
+            }
 
         } catch (error) {
             console.error('Error:', error);
+            removeTypingIndicator();
             addMessage('Failed to find hospitals.', 'bot');
-        } finally {
-            showLoading(false);
         }
     }, (error) => {
         console.error('Geolocation error:', error);
+        removeTypingIndicator();
         addMessage('Unable to retrieve your location. Please allow location access.', 'bot');
-        showLoading(false);
+    }, {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
     });
 }
 
-async function bookAppointment() {
-    addMessage('I want to book a doctor appointment', 'user');
+async function bookAppointment(hospitalName = null) {
+    let message = 'I want to book a doctor appointment';
+    if (hospitalName) {
+        message += ` at ${hospitalName}`;
+    }
+    addMessage(message, 'user');
+
     const time = prompt("Enter preferred time (e.g., Tomorrow 10 AM):");
     if (!time) return;
 
-    showLoading(true);
+    showTypingIndicator();
     try {
         const response = await fetch('http://localhost:8000/api/appointments/book', {
             method: 'POST',
@@ -552,24 +759,36 @@ async function bookAppointment() {
         });
 
         const data = await response.json();
-        addMessage(`Appointment booked! ${data.message}`, 'bot');
+        removeTypingIndicator();
+
+        let confirmationMsg = `Appointment booked!`;
+        if (hospitalName) {
+            confirmationMsg += ` Your appointment at <strong>${hospitalName}</strong> is confirmed.`;
+        } else {
+            confirmationMsg += ` ${data.message}`;
+        }
+        addMessage(confirmationMsg, 'bot');
+
+        if (isVoiceMode) {
+            speakText(`Appointment booked successfully.`);
+        }
+
     } catch (error) {
         console.error('Error:', error);
+        removeTypingIndicator();
         addMessage('Failed to book appointment.', 'bot');
-    } finally {
-        showLoading(false);
     }
 }
 
 // Emergency function
 async function triggerEmergency() {
     if (confirm('🚨 This will call emergency services. Are you in a life-threatening situation?')) {
-        showLoading(true);
+        showTypingIndicator();
 
         // Get real browser location
         if (!navigator.geolocation) {
+            removeTypingIndicator();
             addMessage('Location access needed for emergency services!', 'bot');
-            showLoading(false);
             return;
         }
 
@@ -592,18 +811,22 @@ async function triggerEmergency() {
                 });
 
                 const data = await response.json();
+                removeTypingIndicator();
                 alert('Emergency services have been notified. Help is on the way!');
                 addMessage(`🚨 EMERGENCY: ${data.message}`, 'bot');
             } catch (error) {
                 console.error('Error:', error);
+                removeTypingIndicator();
                 addMessage('Failed to call emergency services. Please call 911 immediately!', 'bot');
-            } finally {
-                showLoading(false);
             }
         }, (error) => {
             console.error('Location error:', error);
+            removeTypingIndicator();
             addMessage('Failed to get location. Please enable location access!', 'bot');
-            showLoading(false);
+        }, {
+            enableHighAccuracy: true,
+            timeout: 10000,
+            maximumAge: 0
         });
     }
 }
@@ -612,15 +835,6 @@ async function triggerEmergency() {
 function updateRecommendations(response) {
     const recommendationsDiv = document.getElementById('recommendations');
     recommendationsDiv.innerHTML = `<div class="alert alert-info">${formatPrescriptionAnalysis(response)}</div>`;
-}
-
-// Loading modal
-function showLoading(show) {
-    const modalEl = document.getElementById('loadingModal');
-    if (!modalEl) return;
-    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    if (show) modal.show();
-    else modal.hide();
 }
 
 // Simple error handling
