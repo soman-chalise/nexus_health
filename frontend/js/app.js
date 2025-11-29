@@ -1,78 +1,207 @@
-// Global variables
-let isVoiceMode = false;
-let currentSessionId = 'session_' + Date.now();
-let recognition = null;
+// Configuration
+const API_BASE_URL = 'http://localhost:8000';
 
-// Initialize the app
-document.addEventListener('DOMContentLoaded', function () {
-    console.log('Nexus Health initialized');
+// Initialize global variables
+var isVoiceMode = false;
+var currentSessionId = 'session_' + Date.now();
+var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+var recognition;
 
-    // Initialize voice recognition if available
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-        initVoiceRecognition();
-    } else {
-        const voiceBtn = document.getElementById('voice-button');
-        if (voiceBtn) {
-            voiceBtn.disabled = true;
-            voiceBtn.title = 'Voice not supported';
-        }
+// Chat History Management
+const CHAT_HISTORY_KEY = 'nexus_health_chat_history';
+const CURRENT_CHAT_KEY = 'nexus_health_current_chat';
+
+// Get all chat history from localStorage
+function getChatHistory() {
+    const history = localStorage.getItem(CHAT_HISTORY_KEY);
+    return history ? JSON.parse(history) : [];
+}
+
+// Save chat history to localStorage
+function saveChatHistory(history) {
+    localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(history));
+}
+
+// Get current chat ID
+function getCurrentChatId() {
+    return localStorage.getItem(CURRENT_CHAT_KEY) || currentSessionId;
+}
+
+// Set current chat ID
+function setCurrentChatId(chatId) {
+    localStorage.setItem(CURRENT_CHAT_KEY, chatId);
+    currentSessionId = chatId;
+}
+
+// Save message to current conversation
+function saveMessageToHistory(message, sender) {
+    const history = getChatHistory();
+    const chatId = getCurrentChatId();
+
+    let chat = history.find(c => c.id === chatId);
+    if (!chat) {
+        chat = {
+            id: chatId,
+            title: message.substring(0, 30) + (message.length > 30 ? '...' : ''),
+            messages: [],
+            timestamp: Date.now()
+        };
+        history.unshift(chat);
     }
 
-    // Attach event listeners
-    document.getElementById('send-button').addEventListener('click', sendMessage);
-    document.getElementById('message-input').addEventListener('keypress', handleKeyPress);
-    document.getElementById('voice-button').addEventListener('click', toggleVoiceMode);
-
-    // Chat File Upload Listeners
-    const attachBtn = document.getElementById('attach-button');
-    const fileInput = document.getElementById('chat-file-input');
-
-    if (attachBtn && fileInput) {
-        attachBtn.addEventListener('click', () => fileInput.click());
-        fileInput.addEventListener('change', handleFileUpload);
-    }
-
-    // Emergency Button (Floating)
-    const emergencyBtn = document.getElementById('emergency-button');
-    if (emergencyBtn) emergencyBtn.addEventListener('click', triggerEmergency);
-
-    // New Action Icons
-    const alertBtn = document.getElementById('alert-button');
-    if (alertBtn) alertBtn.addEventListener('click', triggerEmergency);
-
-    const hospitalBtn = document.getElementById('hospital-button');
-    if (hospitalBtn) hospitalBtn.addEventListener('click', toggleHospitalMenu);
-
-    // Close hospital menu when clicking outside
-    document.addEventListener('click', function (event) {
-        const menu = document.getElementById('hospital-menu');
-        const btn = document.getElementById('hospital-button');
-        if (menu && btn && !menu.contains(event.target) && !btn.contains(event.target)) {
-            menu.style.display = 'none';
-        }
+    chat.messages.push({
+        text: message,
+        sender: sender,
+        timestamp: Date.now()
     });
-});
 
-// Hospital Menu Functions
-function toggleHospitalMenu() {
-    const menu = document.getElementById('hospital-menu');
-    if (menu) {
-        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
-    }
+    chat.lastUpdated = Date.now();
+    saveChatHistory(history);
+    updateSidebarUI();
 }
 
-function handleHospitalAction(action) {
-    const menu = document.getElementById('hospital-menu');
-    if (menu) menu.style.display = 'none';
+// Load conversation by ID
+function loadConversation(chatId) {
+    const history = getChatHistory();
+    const chat = history.find(c => c.id === chatId);
 
-    if (action === 'locate') {
-        findHospitals();
-    }
+    if (!chat) return;
+
+    setCurrentChatId(chatId);
+
+    // Clear chat messages
+    const chatMessages = document.getElementById('chat-messages');
+    chatMessages.innerHTML = '';
+
+    // Load messages
+    chat.messages.forEach(msg => {
+        addMessageToUI(msg.text, msg.sender);
+    });
+
+    updateSidebarUI();
+    closeSidebar();
 }
 
-// Voice Recognition Functions
-function initVoiceRecognition() {
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+// Create new conversation
+function createNewConversation() {
+    currentSessionId = 'session_' + Date.now();
+    setCurrentChatId(currentSessionId);
+
+    // Clear chat messages
+    const chatMessages = document.getElementById('chat-messages');
+    chatMessages.innerHTML = '';
+
+    // Add welcome message
+    addMessageToUI('Hello! I\'m your medical assistant. How are you feeling today?', 'bot');
+
+    updateSidebarUI();
+    closeSidebar();
+}
+
+// Delete conversation
+function deleteConversation(chatId, event) {
+    if (event) {
+        event.stopPropagation();
+    }
+
+    if (!confirm('Are you sure you want to delete this conversation?')) {
+        return;
+    }
+
+    const history = getChatHistory();
+    const filteredHistory = history.filter(c => c.id !== chatId);
+    saveChatHistory(filteredHistory);
+
+    // If deleted current chat, create new one
+    if (chatId === getCurrentChatId()) {
+        createNewConversation();
+    }
+
+    updateSidebarUI();
+}
+
+// Update sidebar UI
+function updateSidebarUI() {
+    const history = getChatHistory();
+    const currentChatId = getCurrentChatId();
+    const sidebarBody = document.getElementById('sidebar-body');
+
+    if (!sidebarBody) return;
+
+    let html = `
+        <button class="btn btn-light w-100 mb-3" onclick="createNewConversation()">
+            <i class="fas fa-plus me-2"></i> New Chat
+        </button>
+    `;
+
+    if (history.length === 0) {
+        // Show current session
+        html += `
+            <div class="conversation-item active">
+                <div class="d-flex justify-content-between align-items-start">
+                    <div>
+                        <h6>Current Session</h6>
+                        <small>Just now</small>
+                    </div>
+                </div>
+            </div>
+        `;
+    } else {
+        history.forEach(chat => {
+            const isActive = chat.id === currentChatId;
+            const timeAgo = getTimeAgo(chat.lastUpdated || chat.timestamp);
+
+            html += `
+                <div class="conversation-item ${isActive ? 'active' : ''}" onclick="loadConversation('${chat.id}')">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="flex-grow-1">
+                            <h6>${chat.title}</h6>
+                            <small>${timeAgo}</small>
+                        </div>
+                        <button class="btn btn-link p-0 delete-btn" onclick="deleteConversation('${chat.id}', event)">
+                            <i class="fas fa-trash-alt fa-xs"></i>
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    sidebarBody.innerHTML = html;
+}
+
+// Get time ago
+function getTimeAgo(timestamp) {
+    const seconds = Math.floor((Date.now() - timestamp) / 1000);
+
+    if (seconds < 60) return 'Just now';
+    if (seconds < 3600) return Math.floor(seconds / 60) + ' min ago';
+    if (seconds < 86400) return Math.floor(seconds / 3600) + ' hours ago';
+    if (seconds < 604800) return Math.floor(seconds / 86400) + ' days ago';
+
+    return new Date(timestamp).toLocaleDateString();
+}
+
+// Open sidebar
+function openSidebar() {
+    const sidebar = document.getElementById('conversation-sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+
+    if (sidebar) sidebar.classList.add('active');
+    if (overlay) overlay.classList.add('active');
+}
+
+// Close sidebar
+function closeSidebar() {
+    const sidebar = document.getElementById('conversation-sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+
+    if (sidebar) sidebar.classList.remove('active');
+    if (overlay) overlay.classList.remove('active');
+}
+
+// Initialize Speech Recognition
+if (SpeechRecognition) {
     recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = true;
@@ -81,7 +210,7 @@ function initVoiceRecognition() {
     recognition.onstart = function () {
         console.log('Voice recognition started. Speak now.');
         const input = document.getElementById('message-input');
-        input.placeholder = "Listening...";
+        if (input) input.placeholder = "Listening...";
     };
 
     recognition.onspeechend = function () {
@@ -127,7 +256,8 @@ function initVoiceRecognition() {
         } else {
             const voiceBtn = document.getElementById('voice-button');
             if (voiceBtn) voiceBtn.classList.remove('recording');
-            document.getElementById('message-input').placeholder = "Describe symptoms or upload prescription...";
+            const input = document.getElementById('message-input');
+            if (input) input.placeholder = "Describe symptoms or upload prescription...";
         }
     };
 
@@ -140,6 +270,8 @@ function initVoiceRecognition() {
             console.log('No speech detected.');
         }
     };
+} else {
+    console.warn("Speech Recognition API not supported in this browser.");
 }
 
 function toggleVoiceMode() {
@@ -153,13 +285,13 @@ function toggleVoiceMode() {
     const voiceIcon = document.getElementById('voice-icon');
 
     if (isVoiceMode) {
-        voiceBtn.classList.add('recording');
-        voiceIcon.className = 'fas fa-stop';
+        if (voiceBtn) voiceBtn.classList.add('recording');
+        if (voiceIcon) voiceIcon.className = 'fas fa-stop';
         startVoiceRecognition();
         speakText("Voice mode enabled. I am listening.");
     } else {
-        voiceBtn.classList.remove('recording');
-        voiceIcon.className = 'fas fa-microphone';
+        if (voiceBtn) voiceBtn.classList.remove('recording');
+        if (voiceIcon) voiceIcon.className = 'fas fa-microphone';
         stopVoiceRecognition();
         window.speechSynthesis.cancel();
     }
@@ -184,6 +316,9 @@ function stopVoiceRecognition() {
 function speakText(text) {
     if (!isVoiceMode) return;
 
+    // Cancel any previous speech to avoid overlapping
+    window.speechSynthesis.cancel();
+
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
@@ -199,7 +334,6 @@ async function handleFileUpload(event) {
     // Reset input
     event.target.value = '';
 
-    // Add message to chat indicating upload
     addMessage(`📄 Uploaded prescription: ${file.name}`, 'user');
     showTypingIndicator();
 
@@ -207,7 +341,7 @@ async function handleFileUpload(event) {
     formData.append('file', file);
 
     try {
-        const response = await fetch('http://localhost:8000/api/medical/analyze-prescription', {
+        const response = await fetch(`${API_BASE_URL}/api/medical/analyze-prescription`, {
             method: 'POST',
             body: formData
         });
@@ -215,11 +349,9 @@ async function handleFileUpload(event) {
         const data = await response.json();
         removeTypingIndicator();
 
-        // Render result in chat
         const analysisHtml = renderPrescriptionResult(data.analysis);
         addMessage(analysisHtml, 'bot');
 
-        // Auto-set reminders
         if (data.analysis && data.analysis.medications) {
             const count = data.analysis.medications.length;
             addMessage(`✅ I've extracted ${count} medications and automatically set reminders for you.`, 'bot');
@@ -228,9 +360,8 @@ async function handleFileUpload(event) {
                 speakText(`I have analyzed your prescription and set reminders for ${count} medications.`);
             }
 
-            // Set reminders automatically
             data.analysis.medications.forEach(med => {
-                setReminder(med.name, med.frequency, true); // true = silent/auto mode
+                setReminder(med.name, med.frequency, true);
             });
         }
 
@@ -252,7 +383,7 @@ function renderPrescriptionResult(analysis) {
                 <small><i class="fas fa-file-prescription"></i> Prescription Analysis</small>
             </div>
             <div class="card-body p-2">
-                <p class="mb-1 small"><strong>Dr:</strong> ${analysis.doctor_name} | <strong>Date:</strong> ${analysis.date}</p>
+                <p class="mb-1 small"><strong>Dr:</strong> ${analysis.doctor_name || 'N/A'} | <strong>Date:</strong> ${analysis.date || 'N/A'}</p>
                 <div class="table-responsive">
                     <table class="table table-sm table-striped mb-0 small">
                         <thead>
@@ -293,7 +424,6 @@ function renderPrescriptionResult(analysis) {
     return html;
 }
 
-// Render medicine cards below AI response
 function renderMedicineCards(medicines) {
     if (!medicines || medicines.length === 0) return;
 
@@ -326,13 +456,12 @@ async function sendMessage() {
     const message = input.value.trim();
     if (!message) return;
 
-    // Add user message to chat
     addMessage(message, 'user');
     input.value = '';
     showTypingIndicator();
 
     try {
-        const response = await fetch('http://localhost:8000/api/chat/text', {
+        const response = await fetch(`${API_BASE_URL}/api/chat/text`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -345,7 +474,6 @@ async function sendMessage() {
         const data = await response.json();
         removeTypingIndicator();
 
-        // Handle actions first
         let actionTriggered = false;
         if (data.action) {
             console.log("Action triggered:", data.action);
@@ -368,23 +496,17 @@ async function sendMessage() {
             }
         }
 
-        // Clean response text (remove [MED:...] markers)
         let cleanResponse = data.response ? data.response.replace(/\[MED:(.*?)\]/g, '$1') : '';
 
-        // Only show AI text response if it's NOT just a generic confirmation of the action
-        // OR if no action was triggered.
         if (!actionTriggered && cleanResponse) {
-            // Await the streaming to finish before showing cards
             await addMessage(cleanResponse, 'bot', true);
             if (isVoiceMode) {
                 speakText(cleanResponse);
             }
         } else if (actionTriggered && cleanResponse) {
-            // Suppress AI response if action is triggered to avoid double printing
             console.log("Suppressed AI response due to action:", cleanResponse);
         }
 
-        // Render medicine cards if recommendations found
         if (data.medicine_recommendations && data.medicine_recommendations.length > 0) {
             renderMedicineCards(data.medicine_recommendations);
         }
@@ -397,7 +519,6 @@ async function sendMessage() {
 }
 
 function setReminder(medicineName, frequency, silent = false) {
-    // Simulate setting a reminder
     const time = new Date();
     time.setSeconds(time.getSeconds() + 5);
 
@@ -406,11 +527,9 @@ function setReminder(medicineName, frequency, silent = false) {
     }
 
     setTimeout(() => {
-        // Play a sound
         const audio = new Audio('https://actions.google.com/sounds/v1/alarms/beep_short.ogg');
         audio.play().catch(e => console.log('Audio play failed', e));
 
-        // Use a nicer notification if possible, fallback to alert
         if (Notification.permission === "granted") {
             new Notification(`⏰ Time to take ${medicineName}!`, {
                 body: `Dosage: ${frequency}`
@@ -432,22 +551,19 @@ function setReminder(medicineName, frequency, silent = false) {
         if (isVoiceMode) {
             speakText(`It is time to take your ${medicineName}.`);
         }
-    }, 5000 + (Math.random() * 2000)); // Stagger slightly
+    }, 5000 + (Math.random() * 2000));
 }
 
-// Add message to chat
-function addMessage(text, sender, stream = false) {
+// Add message to UI only (no saving)
+function addMessageToUI(text, sender, stream = false) {
     const chatMessages = document.getElementById('chat-messages');
     const messageDiv = document.createElement('div');
     messageDiv.className = `message ${sender}-message`;
 
-    // Create content wrapper
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
-
     messageDiv.appendChild(contentDiv);
 
-    // Create time element
     const timeDiv = document.createElement('div');
     timeDiv.className = 'message-time';
     timeDiv.innerText = 'Just now';
@@ -457,15 +573,11 @@ function addMessage(text, sender, stream = false) {
     chatMessages.scrollTop = chatMessages.scrollHeight;
 
     if (stream && sender === 'bot' && !text.trim().startsWith('<')) {
-        // Stream text for bot messages that aren't HTML
-        // Return the promise from typeMessage
         return typeMessage(text, contentDiv);
     } else {
-        // Check if text is HTML (starts with <)
         if (text.trim().startsWith('<')) {
             contentDiv.innerHTML = text;
         } else {
-            // Escape HTML for plain text to prevent XSS
             const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
             contentDiv.innerHTML = safeText;
         }
@@ -473,7 +585,16 @@ function addMessage(text, sender, stream = false) {
     }
 }
 
-// Format message with basic markdown
+// Add message (with history saving)
+function addMessage(text, sender, stream = false) {
+    // Save to history (only save plain text, not HTML)
+    if (!text.trim().startsWith('<')) {
+        saveMessageToHistory(text, sender);
+    }
+
+    return addMessageToUI(text, sender, stream);
+}
+
 function formatMessage(text) {
     return text
         .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
@@ -481,14 +602,10 @@ function formatMessage(text) {
         .replace(/\n/g, '<br>');
 }
 
-// Typing effect function
 function typeMessage(text, element) {
     return new Promise((resolve) => {
         const formatted = formatMessage(text);
-        // Split by HTML tags or words
-        // Regex matches: <tag...> OR non-tag text
         const parts = formatted.match(/(<[^>]+>|[^<]+)/g) || [];
-
         let i = 0;
 
         function stream() {
@@ -499,13 +616,10 @@ function typeMessage(text, element) {
 
             const part = parts[i];
             if (part.startsWith('<')) {
-                // It's a tag, append immediately
                 element.innerHTML += part;
                 i++;
                 stream();
             } else {
-                // It's text, split by space to get words
-                // We preserve spaces by splitting by space and adding it back
                 const words = part.split(' ');
                 let w = 0;
 
@@ -515,16 +629,11 @@ function typeMessage(text, element) {
                         stream();
                         return;
                     }
-                    // Add space if it's not the last word, or if the original text had space
-                    // Simple approximation: add space after every word except maybe last?
-                    // split(' ') consumes the space.
                     element.innerHTML += words[w] + (w < words.length - 1 ? ' ' : '');
                     w++;
 
                     const chatMessages = document.getElementById('chat-messages');
                     chatMessages.scrollTop = chatMessages.scrollHeight;
-
-                    // Fast delay for words (e.g., 30-70ms)
                     setTimeout(streamWords, 30 + Math.random() * 40);
                 }
                 streamWords();
@@ -534,11 +643,8 @@ function typeMessage(text, element) {
     });
 }
 
-// Show/Hide Typing Indicator
 function showTypingIndicator() {
     const chatMessages = document.getElementById('chat-messages');
-
-    // Remove existing if any
     removeTypingIndicator();
 
     const indicatorHtml = `
@@ -560,7 +666,6 @@ function removeTypingIndicator() {
     }
 }
 
-// Handle Enter key press
 function handleKeyPress(event) {
     if (event.key === 'Enter') {
         sendMessage();
@@ -584,7 +689,7 @@ async function orderMedicine(medicineName = null) {
     if (confirm(`Do you want to place an order for ${medicineName}?`)) {
         showTypingIndicator();
         try {
-            const response = await fetch(`http://localhost:8000/api/medical/order-medicine?medicine_id=1&user_id=user_123&quantity=1`, {
+            const response = await fetch(`${API_BASE_URL}/api/medical/order-medicine?medicine_id=1&user_id=user_123&quantity=1`, {
                 method: 'POST'
             });
             const data = await response.json();
@@ -599,10 +704,10 @@ async function orderMedicine(medicineName = null) {
     }
 }
 
+// FIX: This function was broken in the original code
 async function buyMedicine(medicineName) {
     console.log(`🛒 Buying medicine: ${medicineName}`);
 
-    // Create a progress message container
     const progressId = 'progress-' + Date.now();
     const progressHtml = `
         <div id="${progressId}" class="alert alert-info mb-2">
@@ -614,20 +719,18 @@ async function buyMedicine(medicineName) {
     `;
     addMessage(progressHtml, 'bot');
 
-    // Simulated progress updates
     const updateProgress = (text) => {
         const el = document.getElementById(`${progressId}-text`);
         if (el) el.innerText = text;
     };
 
-    // Sequence of updates
     setTimeout(() => updateProgress(`🔍 Searching for ${medicineName} on 1mg...`), 1000);
     setTimeout(() => updateProgress(`💊 Found ${medicineName}. Verifying details...`), 3000);
     setTimeout(() => updateProgress(`🛒 Adding ${medicineName} to cart...`), 5000);
     setTimeout(() => updateProgress(`✅ Verifying cart contents...`), 7000);
 
     try {
-        const response = await fetch('http://localhost:8000/api/medical/buy-medicine', {
+        const response = await fetch(`${API_BASE_URL}/api/medical/buy-medicine`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -638,7 +741,6 @@ async function buyMedicine(medicineName) {
 
         const data = await response.json();
 
-        // Remove progress message
         const progressEl = document.getElementById(progressId);
         if (progressEl) progressEl.remove();
 
@@ -687,7 +789,7 @@ async function findHospitals() {
 
             console.log(`Searching hospitals at: ${lat}, ${lon}`);
 
-            const response = await fetch(`http://localhost:8000/api/emergency/hospitals/nearby?latitude=${lat}&longitude=${lon}`);
+            const response = await fetch(`${API_BASE_URL}/api/emergency/hospitals/nearby?latitude=${lat}&longitude=${lon}`);
             const data = await response.json();
             removeTypingIndicator();
 
@@ -745,7 +847,7 @@ async function bookAppointment(hospitalName = null) {
 
     showTypingIndicator();
     try {
-        const response = await fetch('http://localhost:8000/api/appointments/book', {
+        const response = await fetch(`${API_BASE_URL}/api/appointments/book`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -785,7 +887,6 @@ async function triggerEmergency() {
     if (confirm('🚨 This will call emergency services. Are you in a life-threatening situation?')) {
         showTypingIndicator();
 
-        // Get real browser location
         if (!navigator.geolocation) {
             removeTypingIndicator();
             addMessage('Location access needed for emergency services!', 'bot');
@@ -797,7 +898,7 @@ async function triggerEmergency() {
                 const location = `${position.coords.latitude}, ${position.coords.longitude}`;
                 console.log(`🚨 Emergency at real location: ${location}`);
 
-                const response = await fetch('http://localhost:8000/api/emergency/ambulance', {
+                const response = await fetch(`${API_BASE_URL}/api/emergency/ambulance`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -834,11 +935,98 @@ async function triggerEmergency() {
 // Update recommendations
 function updateRecommendations(response) {
     const recommendationsDiv = document.getElementById('recommendations');
-    recommendationsDiv.innerHTML = `<div class="alert alert-info">${formatPrescriptionAnalysis(response)}</div>`;
+    if (recommendationsDiv) {
+        recommendationsDiv.innerHTML = `<div class="alert alert-info">${formatPrescriptionAnalysis(response)}</div>`;
+    }
 }
 
 // Simple error handling
 window.addEventListener('error', function (e) {
     console.error('Application error:', e.error);
-    addMessage('Something went wrong. Please refresh the page and try again.', 'bot');
 });
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function () {
+    // Initialize sidebar
+    const sidebarToggle = document.getElementById('sidebar-toggle');
+    const sidebarClose = document.getElementById('sidebar-close');
+    const sidebar = document.getElementById('conversation-sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', openSidebar);
+    }
+
+    if (sidebarClose) {
+        sidebarClose.addEventListener('click', closeSidebar);
+    }
+
+    if (overlay) {
+        overlay.addEventListener('click', closeSidebar);
+    }
+
+    // Initialize event listeners
+    const sendButton = document.getElementById('send-button');
+    if (sendButton) {
+        sendButton.addEventListener('click', sendMessage);
+    }
+
+    const voiceButton = document.getElementById('voice-button');
+    if (voiceButton) {
+        voiceButton.addEventListener('click', toggleVoiceMode);
+    }
+
+    const attachButton = document.getElementById('attach-button');
+    const fileInput = document.getElementById('chat-file-input');
+    if (attachButton && fileInput) {
+        attachButton.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileUpload);
+    }
+
+    const alertButton = document.getElementById('alert-button');
+    if (alertButton) {
+        alertButton.addEventListener('click', triggerEmergency);
+    }
+
+    const hospitalButton = document.getElementById('hospital-button');
+    if (hospitalButton) {
+        hospitalButton.addEventListener('click', toggleHospitalMenu);
+    }
+
+    // Load chat history and update sidebar
+    updateSidebarUI();
+
+    // Load current conversation if exists
+    const currentChatId = getCurrentChatId();
+    const history = getChatHistory();
+    const currentChat = history.find(c => c.id === currentChatId);
+
+    if (currentChat && currentChat.messages.length > 0) {
+        // Clear default message
+        const chatMessages = document.getElementById('chat-messages');
+        chatMessages.innerHTML = '';
+
+        // Load messages
+        currentChat.messages.forEach(msg => {
+            addMessageToUI(msg.text, msg.sender);
+        });
+    }
+});
+
+// Toggle hospital menu
+function toggleHospitalMenu() {
+    const menu = document.getElementById('hospital-menu');
+    if (menu) {
+        menu.style.display = menu.style.display === 'none' ? 'block' : 'none';
+    }
+}
+
+// Handle hospital action
+function handleHospitalAction(action) {
+    const menu = document.getElementById('hospital-menu');
+    if (menu) menu.style.display = 'none';
+
+    if (action === 'locate') {
+        findHospitals();
+    }
+}

@@ -12,26 +12,12 @@ python-dotenv
 geopy
 requests
 twilio
-# Voice processing
 SpeechRecognition
 pyaudio
 elevenlabs
-
-# Emergency services
 geopy
 twilio
 python-dotenv
-
-# HTTP requests
 requests
-
-# Windows TTS (optional)
 pywin32
-
-# For audio processing
 pydub
-
-# Browser automation for shopping agent
-selenium
-webdriver-manager
-beautifulsoup4
